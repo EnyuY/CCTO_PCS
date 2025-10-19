@@ -4,17 +4,20 @@
 
 ```
 CCTO_PCS/
-├── main.py                  # Main entry point (simplified)
-├── FiguresOuter.py          # Core figure generation (legacy)
-├── src/                     # Modular code
-│   ├── config.py            # Style settings
-│   ├── data_loader.py       # Data loading
-│   ├── utils.py             # Utilities
+├── main.py                      # Entry point
+├── requirements.txt             # Dependencies
+├── src/                         # Source code
+│   ├── config.py                # Style configuration
+│   ├── data_loader.py           # Data loading
+│   ├── statistics.py            # Statistical tests
+│   ├── cox_analysis.py          # Cox regression
+│   ├── plotting.py              # Plotting utilities
+│   ├── figures_legacy.py        # Figure generation (core)
+│   ├── utils.py                 # Utilities
 │   └── __init__.py
-├── requirements.txt         # Dependencies
-├── Data/                    # Data files (not tracked)
-├── Figures/                 # Output figures (not tracked)
-└── Tables/                  # Output statistics (not tracked)
+├── Data/                        # Input data (not tracked)
+├── Figures/                     # Output figures (not tracked)
+└── Tables/                      # Output statistics (not tracked)
 ```
 
 ## Figures

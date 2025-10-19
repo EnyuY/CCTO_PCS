@@ -1,21 +1,17 @@
 #!/usr/bin/env python3
 """
 Main script for generating all figures and tables.
-Simplified entry point that calls modular functions.
 """
 
 import sys
 import os
 
-# Add src to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
+sys.path.insert(0, os.path.dirname(__file__))
 
 from src.config import set_nature_style
 from src.data_loader import load_full_data, load_and_preprocess_data  
 from src.utils import merge_statistics_to_excel
-
-# Import from existing FiguresOuter for now (will modularize later)
-from FiguresOuter import generate_figure1, generate_figure2, generate_figure3
+from src.figures_legacy import generate_figure1, generate_figure2, generate_figure3
 
 
 def main():
