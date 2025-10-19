@@ -1,14 +1,21 @@
+# Python environment
 venv/
 __pycache__/
 
+# Data files
 *.xlsx
 *.xls
+
+# Output files
 *.csv
-*.txt
 *.pdf
-*.json
 *.png
+*.json
 
+# Exclude requirements.txt from *.txt rule
+*.txt
+!requirements.txt
 
+# System files
 .DS_Store
 *.log

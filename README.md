@@ -3,7 +3,7 @@
 ## Repository Structure
 
 ```
-ZCH-CO-R1/
+CCTO_PCS/
 ├── FiguresOuter.py           # Main script (Figure 1, 2, 3)
 ├── Figure1C_COX.py           # Cox regression (Figure 1C)
 ├── requirements.txt          # Dependencies
@@ -23,8 +23,8 @@ ZCH-CO-R1/
 ## Installation
 
 ```bash
-git clone https://github.com/yourusername/ZCH-CO-R1.git
-cd ZCH-CO-R1
+git clone https://github.com/EnyuY/CCTO_PCS.git
+cd CCTO_PCS
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
@@ -47,6 +47,8 @@ Outputs: `Figures/*.pdf`, `Figures/*.png`, `Tables/*.csv`
 
 ## Dependencies
 
-pandas, numpy, matplotlib, scipy, lifelines, openpyxl
+pandas (>=1.5.0), numpy (>=1.23.0), matplotlib (>=3.5.0), scipy (>=1.9.0), lifelines (>=0.27.0), openpyxl (>=3.0.0)
+
+See `requirements.txt` for complete list.
 
 
