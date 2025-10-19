@@ -763,6 +763,391 @@ def add_statistical_annotation(ax, pval, text_template, x=0.05, y=0.05, bbox=Tru
         ax.text(x, y, text, transform=ax.transAxes, fontsize=7)
 
 
+
+# ============================================================================
+# Cox regression functions
+# ============================================================================
+
+def load_and_prepare_data(filepath):
+    """
+    Load data and prepare for Cox regression analysis.
+    
+    Parameters
+    ----------
+    filepath : str
+        Path to Excel data file
+        
+    Returns
+    -------
+    pd.DataFrame
+        Preprocessed dataframe ready for Cox regression
+    """
+    # Read data (header in first row)
+    df = pd.read_excel(filepath, header=0)
+    
+    # Clean column names
+    df.columns = df.columns.str.strip().str.replace('\xa0', ' ')
+    
+    # Print data overview
+    print(f"Total samples: {len(df)}")
+    print(f"\nColumns: {list(df.columns)}")
+    print(f"\nMissing values:\n{df.isnull().sum()}")
+    
+    # Keep only necessary columns
+    required_cols = ['Sex', 'Age', 'Pathological subtype', 'Baseline level of LDH',
+                     'Conditions of Surgery', 'Adjuvant therapy(DFS)', 'Chemotherapy',
+                     'First-line targeted therapy', 'Immunotherapy', 'Distant metastases',
+                     'OS(months)', 'Dead status']
+    
+    df_analysis = df[required_cols].copy()
+    
+    # Rename for easier handling
+    df_analysis.columns = ['Sex', 'Age', 'Pathological_subtype', 'LDH',
+                           'Surgery', 'Adjuvant', 'Chemotherapy',
+                           'Targeted', 'Immunotherapy', 'Distant_metastases',
+                           'OS_months', 'Event']
+    
+    return df_analysis
+
+
+def encode_variables_for_cox(df):
+    """
+    Encode categorical variables for Cox regression.
+    
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Raw dataframe
+        
+    Returns
+    -------
+    tuple
+        (df_encoded, variable_info) where variable_info contains encoding details
+    """
+    df_cox = df.copy()
+    variable_info = {}
+    
+    # Sex: male=1, female=0
+    df_cox['Sex_male'] = (df_cox['Sex'].str.lower() == 'male').astype(int)
+    variable_info['Sex'] = {'reference': 'Female', 'comparison': 'Male'}
+    
+    # Age: continuous variable (already numeric)
+    variable_info['Age'] = {'type': 'continuous', 'unit': 'years'}
+    
+    # LDH: Elevated=1, Normal=0
+    df_cox['LDH_elevated'] = (df_cox['LDH'].str.contains('Elevated', case=False, na=False)).astype(int)
+    variable_info['LDH'] = {'reference': 'Normal', 'comparison': 'Elevated'}
+    
+    # Surgery: R0=0, R1/R2=1
+    df_cox['Surgery_R1R2'] = (df_cox['Surgery'].str.contains('R1|R2', case=False, na=False)).astype(int)
+    variable_info['Surgery'] = {'reference': 'R0', 'comparison': 'R1/R2'}
+    
+    # Distant metastases: 0=no, 1=yes (already numeric)
+    variable_info['Distant_metastases'] = {'reference': 'No', 'comparison': 'Yes'}
+    
+    # Chemotherapy: received=1, not received/NA=0
+    df_cox['Chemotherapy_yes'] = df_cox['Chemotherapy'].notna().astype(int)
+    variable_info['Chemotherapy'] = {'reference': 'No', 'comparison': 'Yes'}
+    
+    # Targeted therapy: 1st line=1, 2nd line or above/NA=0
+    df_cox['Targeted_1st'] = (df_cox['Targeted'].str.contains('1st', case=False, na=False)).astype(int)
+    variable_info['Targeted'] = {'reference': '2nd line or above/No', 'comparison': '1st line'}
+    
+    # Immunotherapy: received=1, not received/NA=0
+    df_cox['Immunotherapy_yes'] = df_cox['Immunotherapy'].notna().astype(int)
+    variable_info['Immunotherapy'] = {'reference': 'No', 'comparison': 'Yes'}
+    
+    # Select final columns for Cox regression
+    cox_vars = ['Sex_male', 'Age', 'LDH_elevated', 'Surgery_R1R2', 
+                'Distant_metastases', 'Chemotherapy_yes', 'Targeted_1st', 
+                'Immunotherapy_yes', 'OS_months', 'Event']
+    
+    df_cox_final = df_cox[cox_vars].dropna()
+    
+    print(f"\nSamples after removing missing values: {len(df_cox_final)}")
+    print(f"Events (deaths): {df_cox_final['Event'].sum()}")
+    
+    return df_cox_final, variable_info
+
+
+# ============================================================================
+# Cox regression analysis
+# ============================================================================
+
+def univariate_cox_analysis(df_cox, variable_info):
+    """
+    Perform univariate Cox regression for each variable.
+    
+    Parameters
+    ----------
+    df_cox : pd.DataFrame
+        Encoded dataframe for Cox regression
+    variable_info : dict
+        Variable encoding information
+        
+    Returns
+    -------
+    pd.DataFrame
+        Results of univariate analysis
+    """
+    results = []
+    
+    var_mapping = {
+        'Sex_male': 'Sex',
+        'Age': 'Age',
+        'LDH_elevated': 'LDH',
+        'Surgery_R1R2': 'Surgery',
+        'Distant_metastases': 'Distant metastases',
+        'Chemotherapy_yes': 'Chemotherapy',
+        'Targeted_1st': 'First-line targeted therapy',
+        'Immunotherapy_yes': 'Immunotherapy'
+    }
+    
+    for var in var_mapping.keys():
+        try:
+            cph = CoxPHFitter()
+            data = df_cox[[var, 'OS_months', 'Event']].copy()
+            cph.fit(data, duration_col='OS_months', event_col='Event')
+            
+            hr = np.exp(cph.params_[var])
+            ci_lower = np.exp(cph.confidence_intervals_.loc[var, '95% lower-bound'])
+            ci_upper = np.exp(cph.confidence_intervals_.loc[var, '95% upper-bound'])
+            p_value = cph.summary.loc[var, 'p']
+            
+            results.append({
+                'Variable': var_mapping[var],
+                'Encoded_var': var,
+                'HR': hr,
+                'CI_lower': ci_lower,
+                'CI_upper': ci_upper,
+                'P_value': p_value
+            })
+            
+        except Exception as e:
+            print(f"Error in univariate analysis for {var}: {e}")
+            continue
+    
+    return pd.DataFrame(results)
+
+
+def multivariate_cox_analysis(df_cox, significant_vars=None, alpha=0.10):
+    """
+    Perform multivariate Cox regression.
+    
+    Parameters
+    ----------
+    df_cox : pd.DataFrame
+        Encoded dataframe for Cox regression
+    significant_vars : list, optional
+        List of variables to include (if None, use all or select by p<alpha)
+    alpha : float
+        Significance level for variable selection
+        
+    Returns
+    -------
+    pd.DataFrame
+        Results of multivariate analysis
+    """
+    var_mapping = {
+        'Sex_male': 'Sex',
+        'Age': 'Age',
+        'LDH_elevated': 'LDH',
+        'Surgery_R1R2': 'Surgery',
+        'Distant_metastases': 'Distant metastases',
+        'Chemotherapy_yes': 'Chemotherapy',
+        'Targeted_1st': 'First-line targeted therapy',
+        'Immunotherapy_yes': 'Immunotherapy'
+    }
+    
+    if significant_vars is None:
+        # Use all variables
+        vars_to_use = list(var_mapping.keys())
+    else:
+        vars_to_use = significant_vars
+    
+    try:
+        cph = CoxPHFitter()
+        cols = vars_to_use + ['OS_months', 'Event']
+        data = df_cox[cols].copy()
+        cph.fit(data, duration_col='OS_months', event_col='Event')
+        
+        results = []
+        for var in vars_to_use:
+            hr = np.exp(cph.params_[var])
+            ci_lower = np.exp(cph.confidence_intervals_.loc[var, '95% lower-bound'])
+            ci_upper = np.exp(cph.confidence_intervals_.loc[var, '95% upper-bound'])
+            p_value = cph.summary.loc[var, 'p']
+            
+            results.append({
+                'Variable': var_mapping[var],
+                'Encoded_var': var,
+                'HR': hr,
+                'CI_lower': ci_lower,
+                'CI_upper': ci_upper,
+                'P_value': p_value
+            })
+        
+        return pd.DataFrame(results)
+        
+    except Exception as e:
+        print(f"Error in multivariate analysis: {e}")
+        return None
+
+
+# ============================================================================
+# Visualization: Forest plot
+# ============================================================================
+
+def format_pvalue(p):
+    """Format p-value with appropriate precision."""
+    if p < 0.001:
+        return f"{p:.2e}"
+    elif p < 0.01:
+        return f"{p:.3f}"
+    else:
+        return f"{p:.2f}"
+
+
+def create_forest_plot(univariate_results, multivariate_results, output_dir='Figures'):
+    """
+    Create combined forest plot with shared axes.
+    
+    Parameters
+    ----------
+    univariate_results : pd.DataFrame
+    multivariate_results : pd.DataFrame
+    output_dir : str
+    """
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Create single axis (compact height)
+    n_vars = len(univariate_results)
+    fig_height = max(2.5, n_vars * 0.2)
+    fig, ax = plt.subplots(1, 1, figsize=(5, fig_height))
+    
+    # Plot combined forest plot
+    plot_combined_forest(ax, univariate_results, multivariate_results)
+    
+    plt.tight_layout()
+    plt.savefig(f'{output_dir}/Figure4.pdf', dpi=300, bbox_inches='tight')
+    plt.savefig(f'{output_dir}/Figure4.png', dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    print(f"\nFigure 4 saved to {output_dir}/")
+
+
+def plot_combined_forest(ax, univariate_results, multivariate_results):
+    """
+    Plot combined forest plot with univariate and multivariate results.
+    
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+    univariate_results : pd.DataFrame
+    multivariate_results : pd.DataFrame
+    """
+    # Get all unique variables from univariate analysis
+    variables = univariate_results['Variable'].tolist()
+    n = len(variables)
+    y_pos = np.arange(n)
+    
+    # Create mapping for multivariate results
+    multi_dict = {}
+    if multivariate_results is not None:
+        for idx, row in multivariate_results.iterrows():
+            multi_dict[row['Variable']] = {
+                'HR': row['HR'],
+                'CI_lower': row['CI_lower'],
+                'CI_upper': row['CI_upper'],
+                'P_value': row['P_value']
+            }
+    
+    # Plot univariate results
+    for i, (idx, row) in enumerate(univariate_results.iterrows()):
+        hr = row['HR']
+        ci_lower = row['CI_lower']
+        ci_upper = row['CI_upper']
+        p = row['P_value']
+        
+        # Color based on significance
+        color = '#0173B2' if p < 0.05 else '#999999'
+        
+        # Plot CI line (offset slightly upward)
+        y_offset = 0.12
+        ax.plot([ci_lower, ci_upper], [i + y_offset, i + y_offset], 
+                color=color, linewidth=1.2, zorder=1, alpha=0.8)
+        
+        # Plot HR point
+        ax.scatter(hr, i + y_offset, s=40, color=color, zorder=2, 
+                  edgecolors='white', linewidth=0.5, alpha=0.8)
+    
+    # Plot multivariate results
+    for i, var in enumerate(variables):
+        if var in multi_dict:
+            multi = multi_dict[var]
+            hr = multi['HR']
+            ci_lower = multi['CI_lower']
+            ci_upper = multi['CI_upper']
+            p = multi['P_value']
+            
+            # Color based on significance
+            color = '#0173B2' if p < 0.05 else '#999999'
+            
+            # Plot CI line (offset slightly downward)
+            y_offset = -0.12
+            ax.plot([ci_lower, ci_upper], [i + y_offset, i + y_offset], 
+                    color=color, linewidth=1.5, zorder=3)
+            
+            # Plot HR point (diamond shape for multivariate)
+            ax.scatter(hr, i + y_offset, s=50, color=color, zorder=4, 
+                      marker='D', edgecolors='white', linewidth=0.5)
+            
+            # Add annotation for multivariate HR and p-value (closer to error bar)
+            text = f"{hr:.2f} ({ci_lower:.2f}-{ci_upper:.2f}), p={format_pvalue(p)}"
+            ax.text(hr, i + y_offset - 0.3, text, fontsize=5, 
+                   ha='center', va='top', color='#000000')
+    
+    # Reference line at HR=1
+    ax.axvline(1, color='black', linestyle='--', linewidth=0.8, alpha=0.5)
+    
+    # Set y-axis
+    ax.set_yticks(y_pos)
+    ax.set_yticklabels(variables, fontsize=7, color='#000000')
+    ax.set_ylim(-0.6, n - 0.4)
+    
+    # Set x-axis (log scale)
+    ax.set_xscale('log')
+    ax.set_xlabel('Hazard Ratio (95% CI)', fontsize=8, color='#000000')
+    ax.set_xlim(0.1, 15)
+    
+    # Add HR and p-value text for all univariate results (on the right side)
+    for i, (idx, row) in enumerate(univariate_results.iterrows()):
+        hr = row['HR']
+        ci_lower = row['CI_lower']
+        ci_upper = row['CI_upper']
+        p = row['P_value']
+        
+        text = f"{hr:.2f} ({ci_lower:.2f}-{ci_upper:.2f}), p={format_pvalue(p)}"
+        ax.text(1.02, i, text, transform=ax.get_yaxis_transform(),
+               fontsize=6, va='center', ha='left', color='#000000')
+    
+    # Add legend (compact)
+    from matplotlib.lines import Line2D
+    legend_elements = [
+        Line2D([0], [0], marker='o', color='w', markerfacecolor='#999999', 
+               markersize=5, label='Uni-COX', markeredgewidth=0.5, markeredgecolor='white'),
+        Line2D([0], [0], marker='D', color='w', markerfacecolor='#999999', 
+               markersize=5, label='Multi-COX', markeredgewidth=0.5, markeredgecolor='white')
+    ]
+    ax.legend(handles=legend_elements, loc='lower right', fontsize=6.5, 
+             frameon=False, handletextpad=0.3, borderaxespad=0.3)
+    
+    # Style
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.grid(axis='x', alpha=0.2, linewidth=0.5)
+
+
 # ============================================================================
 # Figure generation functions
 # ============================================================================
@@ -772,9 +1157,9 @@ def generate_figure1(df_full, output_dir='Figures', table_dir='Tables'):
     Generate Figure 1: Patient characteristics and prognostic factors.
     
     Panels:
-    A: Pathological subtype vs OS
-    B: Baseline LDH vs OS
-    C: Cox regression forest plot (prognostic factors)
+    A: Cox regression forest plot (top, centered)
+    B: Distant metastases vs OS (bottom left)
+    C: Baseline LDH vs OS (bottom right)
     
     Parameters
     ----------
@@ -788,19 +1173,12 @@ def generate_figure1(df_full, output_dir='Figures', table_dir='Tables'):
     # Import Cox analysis functions from Figure1C_COX script
     import sys
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    from Figure1C_COX import (
-        load_and_prepare_data, 
-        encode_variables_for_cox,
-        univariate_cox_analysis,
-        multivariate_cox_analysis,
-        plot_combined_forest
-    )
     
     # Prepare data
     os_col = df_full.columns[12]
-    df_analysis = df_full[[df_full.columns[1], df_full.columns[2], 
+    df_analysis = df_full[[df_full.columns[1], df_full.columns[2], df_full.columns[10],
                            os_col, df_full.columns[14]]].copy()
-    df_analysis.columns = ['Pathological_subtype', 'LDH', 'OS_months', 'Event']
+    df_analysis.columns = ['Pathological_subtype', 'LDH', 'Distant_metastases', 'OS_months', 'Event']
     df_analysis = df_analysis.dropna(subset=['OS_months'])
     
     # Create figure with GridSpec for custom layout
@@ -809,57 +1187,50 @@ def generate_figure1(df_full, output_dir='Figures', table_dir='Tables'):
     gs = GridSpec(2, 5, figure=fig, height_ratios=[1, 1], 
                   hspace=0.50, wspace=0.0)
     
-    # Top row: A and B (survival curves, maintain original height)
-    ax_a = fig.add_subplot(gs[0, :2])  # Left 2/5
-    ax_b = fig.add_subplot(gs[0, 3:])  # Right 2/5 (with gap)
+    # Top row: A (forest plot, centered)
+    ax_a = fig.add_subplot(gs[0, 1:4])
     
-    # Bottom row: C (forest plot; occupy center 3/5, leave 1/5 blank on both sides)
-    ax_c = fig.add_subplot(gs[1, 1:4])  # Center 3/5, flanked by empty 1/5 on both sides
+    # Bottom row: B and C (survival curves)
+    ax_b = fig.add_subplot(gs[1, :2])
+    ax_c = fig.add_subplot(gs[1, 3:])
     
-    # Panel A: Pathological subtype
-    stats_a = plot_km_curve_enhanced(
-        ax_a, df_analysis, 'OS_months', 'Event', 
-        group_col='Pathological_subtype',
-        show_hr=True, show_median=True, show_n_at_risk=True, min_n=2,
-        xlabel=os_col,
-        title='Pathological subtype'
-    )
-    
-    # Panel B: LDH
-    stats_b = plot_km_curve_enhanced(
-        ax_b, df_analysis, 'OS_months', 'Event',
-        group_col='LDH',
-        show_hr=True, show_median=True, show_n_at_risk=True, min_n=2,
-        reference_group='elevated',
-        xlabel=os_col,
-        title='Baseline level of LDH'
-    )
-    
-    # Panel C: Cox regression forest plot
-    print("\nGenerating Panel C: Cox regression analysis...")
+    # Panel A: Cox regression (top)
+    print("\nGenerating Panel A: Cox regression...")
     data_path = 'Data/20251019-R1-data-fac.xlsx'
     df_cox_raw = load_and_prepare_data(data_path)
     df_cox, variable_info = encode_variables_for_cox(df_cox_raw)
     
-    # Univariate analysis
     univariate_results = univariate_cox_analysis(df_cox, variable_info)
-    
-    # Multivariate analysis
     significant_vars = univariate_results[univariate_results['P_value'] < 0.10]['Encoded_var'].tolist()
     if len(significant_vars) > 0:
         multivariate_results = multivariate_cox_analysis(df_cox, significant_vars)
     else:
         multivariate_results = None
     
-    # Plot forest plot in panel C
-    plot_combined_forest(ax_c, univariate_results, multivariate_results)
+    plot_combined_forest(ax_a, univariate_results, multivariate_results)
+    
+    # Panel B: Distant metastases (bottom left)
+    df_met = df_analysis.copy()
+    df_met['Metastases_label'] = df_met['Distant_metastases'].map({0: 'No metastases', 1: 'Metastases'})
+    stats_b = plot_km_curve_enhanced(
+        ax_b, df_met, 'OS_months', 'Event',
+        group_col='Metastases_label', show_hr=True, show_median=True,
+        show_n_at_risk=True, xlabel=os_col, title='Distant metastases'
+    )
+    
+    # Panel C: LDH (bottom right)
+    stats_c = plot_km_curve_enhanced(
+        ax_c, df_analysis, 'OS_months', 'Event',
+        group_col='LDH', show_hr=True, show_median=True, show_n_at_risk=True, min_n=2,
+        reference_group='elevated', xlabel=os_col, title='Baseline level of LDH'
+    )
     
     # Add panel labels
-    ax_a.text(-0.20, 1.05, 'A', transform=ax_a.transAxes, 
+    ax_a.text(-0.3, 1.05, 'A', transform=ax_a.transAxes, 
              fontsize=11, va='top', ha='right', color='black')
-    ax_b.text(-0.15, 1.05, 'B', transform=ax_b.transAxes, 
+    ax_b.text(-0.20, 1.05, 'B', transform=ax_b.transAxes, 
              fontsize=11, va='top', ha='right', color='black')
-    ax_c.text(-0.3, 1.05, 'C', transform=ax_c.transAxes, 
+    ax_c.text(-0.15, 1.05, 'C', transform=ax_c.transAxes, 
              fontsize=11, va='top', ha='right', color='black')
     
     # Save
@@ -869,7 +1240,7 @@ def generate_figure1(df_full, output_dir='Figures', table_dir='Tables'):
     
     # Save statistics
     stats_data = []
-    for var, stats_dict in [('Pathological_subtype', stats_a), ('LDH', stats_b)]:
+    for var, stats_dict in [('Distant_metastases', stats_b), ('LDH', stats_c)]:
         for key, val in stats_dict.items():
             if key not in ['p_value', 'hr_results'] and isinstance(val, dict):
                 row = {
@@ -890,15 +1261,15 @@ def generate_figure1(df_full, output_dir='Figures', table_dir='Tables'):
                                     index=False)
     
     # Save Cox regression results
-    univariate_results.to_csv(f'{table_dir}/Figure1C_univariate_analysis.csv', index=False)
+    univariate_results.to_csv(f'{table_dir}/Figure1A_univariate_analysis.csv', index=False)
     if multivariate_results is not None and len(multivariate_results) > 0:
-        multivariate_results.to_csv(f'{table_dir}/Figure1C_multivariate_analysis.csv', index=False)
+        multivariate_results.to_csv(f'{table_dir}/Figure1A_multivariate_analysis.csv', index=False)
     
     print("Figure1.pdf/png saved")
     print("Figure1_statistics.csv saved")
-    print("Figure1C Cox analysis CSVs saved")
+    print("Figure1A Cox analysis CSVs saved")
     
-    return {'stats_a': stats_a, 'stats_b': stats_b, 
+    return {'stats_b': stats_b, 'stats_c': stats_c, 
             'univariate': univariate_results, 'multivariate': multivariate_results}
 
 
@@ -1075,9 +1446,8 @@ def generate_figure3(df, output_dir='Figures', table_dir='Tables'):
     # E: same width as A+B (2 + spacing + 5 = 8 units including spacing)
     ax_00 = fig.add_subplot(gs[0, :2])    # A: Age scatter (narrow)
     ax_01 = fig.add_subplot(gs[0, 3:8])   # B: Age KM (standard width)
-    ax_10 = fig.add_subplot(gs[1, :2])    # C: Metastases boxplot (narrow, aligned with A)
-    ax_11 = fig.add_subplot(gs[1, 3:8])   # D: Metastases KM (standard width)
-    ax_20 = fig.add_subplot(gs[2, :8])    # E: Pathological subtype boxplot (same width as top rows)
+    ax_10 = fig.add_subplot(gs[1, 2:7])   # C: Pathological KM (centered)
+    ax_20 = fig.add_subplot(gs[2, :8])    # D: Pathological boxplot (same width as top rows)
     
     # Row 1, Col 1: Age vs OS scatter (A - narrow)
     plot_scatter_age_os(ax_00, df, age_cutoff, colors_age)
@@ -1090,62 +1460,18 @@ def generate_figure3(df, output_dir='Figures', table_dir='Tables'):
         title='Age groups'
     )
     
-    # Row 2, Col 1: Boxplot by metastases (C - narrow, aligned with A)
-    # Create color mapping for boxplot points
-    met_colors_for_box = {0: '#0173B2', 1: '#999999'}
-    data_list, labels_list, positions_list = plot_boxplot_with_points(
-        ax_10, df, 'OS_months', 'Distant_metastases', 
-        group_order=[0, 1], colors_dict=met_colors_for_box
+    # Row 2: Pathological KM (C, centered)
+    df_sub = df.copy()
+    df_sub['Subtype_grouped'] = df_sub['Pathological_subtype'].apply(
+        lambda x: 'Angiosarcoma' if x == 'Angiosarcoma' else 'Others*'
     )
-    n0 = (df['Distant_metastases'] == 0).sum()
-    n1 = (df['Distant_metastases'] == 1).sum()
-    ax_10.set_xticks([0, 1])
-    ax_10.set_xticklabels([f'No\n(n={n0})', f'Yes\n(n={n1})'], fontsize=7, color='#000000')
-    ax_10.set_ylabel('OS (months)', fontsize=8, color='#000000')
-    ax_10.set_xlabel('Distant metastases', fontsize=8, color='#000000')
-    
-    mannwhitney_pval = stats.mannwhitneyu(data_list[0], data_list[1])[1]
-    
-    # Add significance bracket (small hat) first
-    if mannwhitney_pval < 0.05:
-        y_max = max([d.max() for d in data_list])
-        y_range = ax_10.get_ylim()[1] - ax_10.get_ylim()[0]
-        y_bracket = y_max + y_range * 0.05
-        ax_10.plot([0, 0, 1, 1], 
-                   [y_bracket, y_bracket + y_range * 0.02, 
-                    y_bracket + y_range * 0.02, y_bracket], 
-                   'k-', linewidth=0.8)
-        
-        # Add p-value and significance marker ABOVE the bracket
-        p_text = f'p = {format_pvalue(mannwhitney_pval)}'
-        if mannwhitney_pval < 0.01:
-            sig_marker = '**'
-        else:
-            sig_marker = '*'
-        p_text += f' {sig_marker}'
-        
-        ax_10.text(0.5, y_bracket + y_range * 0.04, p_text, 
-                   fontsize=8, ha='center', va='bottom', color='#000000')
-    else:
-        # If not significant, show p-value at top
-        p_text = f'p = {format_pvalue(mannwhitney_pval)}'
-        ax_10.text(0.5, 0.95, p_text, transform=ax_10.transAxes, 
-                   fontsize=8, ha='center', va='top', color='#000000')
-    
-    # Row 2, Col 2: KM by metastases (D - standard width)
-    df_met = df.copy()
-    df_met['Metastases_label'] = df_met['Distant_metastases'].map({
-        0: 'No metastases', 
-        1: 'Metastases'
-    })
     plot_km_curve_enhanced(
-        ax_11, df_met, 'OS_months', 'Event',
-        group_col='Metastases_label', show_hr=True, show_median=True,
-        show_n_at_risk=True, xlabel='OS(Months)',
-        title='Distant metastases'
+        ax_10, df_sub, 'OS_months', 'Event',
+        group_col='Subtype_grouped', show_hr=True, show_median=True,
+        show_n_at_risk=True, xlabel='OS(Months)', title='Pathological subtype'
     )
     
-    # Row 3: Boxplot by pathological subtype (E - same width as top rows)
+    # Row 3: Boxplot by pathological subtype (D - same width as top rows)
     subtype_order = df.groupby('Pathological_subtype')['OS_months'].median().sort_values(
         ascending=False).index.tolist()
     
@@ -1260,12 +1586,9 @@ def generate_figure3(df, output_dir='Figures', table_dir='Tables'):
                fontsize=11, va='top', ha='right', color='black')
     ax_01.text(-0.15, 1.05, 'B', transform=ax_01.transAxes, 
                fontsize=11, va='top', ha='right', color='black')
-    ax_10.text(-0.20, 1.05, 'C', transform=ax_10.transAxes, 
+    ax_10.text(-0.15, 1.05, 'C', transform=ax_10.transAxes, 
                fontsize=11, va='top', ha='right', color='black')
-    ax_11.text(-0.15, 1.05, 'D', transform=ax_11.transAxes, 
-               fontsize=11, va='top', ha='right', color='black')
-    # E aligns with C (same x position as C)
-    ax_20.text(-0.05, 1.05, 'E', transform=ax_20.transAxes, 
+    ax_20.text(-0.05, 1.05, 'D', transform=ax_20.transAxes, 
                fontsize=11, va='top', ha='right', color='black')
     
     # Save
@@ -1287,18 +1610,7 @@ def generate_figure3(df, output_dir='Figures', table_dir='Tables'):
             'Median_OS': subset['OS_months'].median()
         })
     
-    # Metastases
-    for met_val in [0, 1]:
-        subset = df[df['Distant_metastases'] == met_val]
-        met_label = 'No_metastases' if met_val == 0 else 'Metastases'
-        stats_data.append({
-            'Group': f'Metastases_{met_label}',
-            'N': len(subset),
-            'Mean_OS': subset['OS_months'].mean(),
-            'Median_OS': subset['OS_months'].median()
-        })
-    
-    # Pathological subtypes
+# Pathological subtypes
     for subtype in subtype_order:
         subset = df[df['Pathological_subtype'] == subtype]
         if len(subset) > 0:

@@ -4,21 +4,33 @@
 
 ```
 CCTO_PCS/
-├── FiguresOuter.py           # Main script (Figure 1, 2, 3)
-├── Figure1C_COX.py           # Cox regression (Figure 1C)
-├── requirements.txt          # Dependencies
-├── Data/                     # Data files (not tracked)
-├── Figures/                  # Output figures (not tracked)
-└── Tables/                   # Output statistics (not tracked)
+├── main.py                  # Main entry point (simplified)
+├── FiguresOuter.py          # Core figure generation (legacy)
+├── src/                     # Modular code
+│   ├── config.py            # Style settings
+│   ├── data_loader.py       # Data loading
+│   ├── utils.py             # Utilities
+│   └── __init__.py
+├── requirements.txt         # Dependencies
+├── Data/                    # Data files (not tracked)
+├── Figures/                 # Output figures (not tracked)
+└── Tables/                  # Output statistics (not tracked)
 ```
 
 ## Figures
 
-**Figure 1**: Patient characteristics and prognostic factors (Pathological subtype, LDH, Cox forest plot)
+**Figure 1**: Prognostic factors and patient characteristics
+- A: Cox regression forest plot (univariate/multivariate)
+- B: Distant metastases vs OS
+- C: Baseline LDH vs OS
 
-**Figure 2**: Treatment outcomes (All patients, Surgery, Adjuvant, Chemotherapy, Targeted, Immunotherapy)
+**Figure 2**: Treatment outcomes (All, Surgery, Adjuvant, Chemotherapy, Targeted, Immunotherapy)
 
-**Figure 3**: Clinical characteristics (Age, Metastases boxplots/KM curves, Pathological subtypes)
+**Figure 3**: Clinical characteristics
+- A: Age vs OS (scatter)
+- B: Age groups vs OS (KM curves)
+- C: Pathological subtype vs OS (KM, Angiosarcoma vs Others)
+- D: Pathological subtype boxplot with pairwise comparisons
 
 ## Installation
 
@@ -33,10 +45,10 @@ pip install -r requirements.txt
 ## Usage
 
 ```bash
-python FiguresOuter.py
+python main.py
 ```
 
-Outputs: `Figures/*.pdf`, `Figures/*.png`, `Tables/*.csv`
+Outputs: `Figures/*.pdf`, `Figures/*.png`, `Tables/*.csv`, `Tables/supplemental_table_1.xlsx`
 
 ## Statistical Methods
 
